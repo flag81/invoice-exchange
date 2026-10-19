@@ -1,0 +1,19 @@
+node_modules
+.next
+dist
+build
+coverage
+.devdata
+.turbo
+.tmp
+pnpm-lock.yaml
+*.tsbuildinfo
+# Generated code (Prisma client) is machine-written; formatting it is pure churn.
+**/generated
+**/src/generated
+# The knowledge-graph output and the bundled graphify skill are tool artifacts, not project source.
+graphify-out
+.agents
+# `next build` rewrites this on every run ("should not be edited"); formatting it would fight the tool.
+apps/web/next-env.d.ts
+

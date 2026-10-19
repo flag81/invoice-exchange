@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    /* Runs in a browser and in React Native: no Node globals, but `fetch`, `Response` and
+       `AbortSignal` come from lib.dom (React Native ships the same global shapes). */
+    "lib": ["ES2023", "DOM"],
+    "types": [],
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"]
+}

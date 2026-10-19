@@ -1,0 +1,524 @@
+:root {
+  color-scheme: light;
+
+  --surface: #ffffff;
+  --surface-muted: #f4f6f8;
+  --surface-sunken: #eceff4;
+  --border: #d7dce4;
+  --text: #171a1f;
+  --text-muted: #5b6472;
+  --accent: #1f56d6;
+
+  --radius: 10px;
+  --shadow-card: 0 1px 2px rgb(16 24 40 / 6%), 0 1px 3px rgb(16 24 40 / 10%);
+
+  --font-sans:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, 'Cascadia Mono', Menlo, Consolas, monospace;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface-muted);
+  color: var(--text);
+  font-family: var(--font-sans);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 44rem;
+  margin: 0 auto;
+  padding: 4rem 1.25rem 6rem;
+}
+
+h1 {
+  font-size: 1.5rem;
+  letter-spacing: -0.01em;
+  margin: 0.35rem 0 0.5rem;
+}
+
+h2 {
+  font-size: 0.95rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  margin: 0 0 0.75rem;
+}
+
+p {
+  margin: 0 0 1rem;
+}
+
+ul {
+  margin: 0 0 1rem;
+  padding-left: 1.1rem;
+}
+
+li + li {
+  margin-top: 0.4rem;
+}
+
+a {
+  color: var(--accent);
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+code {
+  font-family: var(--font-mono);
+  font-size: 0.875em;
+  background: var(--surface-sunken);
+  padding: 0.1em 0.35em;
+  border-radius: 4px;
+}
+
+.badge {
+  display: inline-block;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow-card);
+  padding: 1.5rem;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.footnote {
+  margin-top: 2rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+
+/* ---------------------------------------------------------------------------
+   The capture flow (mobile first). Everything below assumes a phone in one hand:
+   one column, 16px inputs (anything smaller makes iOS Safari zoom on focus), tap
+   targets of at least 44px, and no hover-only affordance anywhere.
+   --------------------------------------------------------------------------- */
+
+.capture {
+  display: grid;
+  gap: 1rem;
+}
+
+.capture-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 3.25rem;
+  margin: 1rem 0 0.5rem;
+  padding: 0.9rem 1rem;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 600;
+  text-align: center;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.capture-button.busy {
+  background: var(--text-muted);
+  cursor: progress;
+}
+
+/* Not a failure but a fact of the origin: shown only where a live camera is impossible (ADR 0010). */
+.capture-note {
+  margin: 0 0 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+  text-align: center;
+}
+
+/* The fallback camera input (ADR 0010): never shown, only clicked. */
+.capture-input,
+.capture-secondary input[type='file'] {
+  display: none;
+}
+
+.capture-secondary {
+  display: block;
+  min-height: 2.75rem;
+  padding: 0.6rem 0;
+  color: var(--accent);
+  font-size: 0.95rem;
+  text-align: center;
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+/* ---------------------------------------------------------------------------
+   The live camera (ADR 0010). A full-screen overlay on black: on a phone it
+   covers the browser chrome, which is the point — the preview is the screen.
+   --------------------------------------------------------------------------- */
+
+.camera-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  background: #000;
+  color: #fff;
+}
+
+.camera-stage {
+  position: relative;
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: center;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.camera-video {
+  width: 100%;
+  height: 100%;
+  /* `cover`, not `contain`: the frame is cropped to the screen rather than letterboxed, which is
+     how every camera app behaves — the shutter captures the whole frame either way. */
+  object-fit: cover;
+}
+
+.camera-note {
+  position: absolute;
+  right: 1.5rem;
+  bottom: 1.5rem;
+  left: 1.5rem;
+  margin: 0;
+  font-size: 0.95rem;
+  text-align: center;
+}
+
+.camera-note.error {
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  background: rgb(138 28 28 / 85%);
+}
+
+.camera-actions {
+  display: grid;
+  gap: 0.5rem;
+  padding: 1rem 1.25rem calc(1.25rem + env(safe-area-inset-bottom));
+  text-align: center;
+}
+
+.camera-hint {
+  margin: 0;
+  color: #c8ced8;
+  font-size: 0.9rem;
+}
+
+.camera-shutter {
+  width: 100%;
+  min-height: 3.25rem;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-family: inherit;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.camera-close {
+  min-height: 2.75rem;
+  border: 0;
+  background: none;
+  color: #c8ced8;
+  font-family: inherit;
+  font-size: 0.95rem;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+/* The second choice on a refused camera: "try again" is primary, "pick a file" must not compete. */
+.camera-shutter.secondary {
+  border: 1px solid #6b7280;
+  background: transparent;
+  color: #e5e7eb;
+}
+
+.field {
+  display: grid;
+  gap: 0.25rem;
+  margin-bottom: 0.85rem;
+}
+
+.field label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--text-muted);
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  /* 16px keeps iOS Safari from zooming the viewport when a field gets focus. */
+  font-size: 16px;
+}
+
+.field input:focus-visible,
+.field select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.field-row {
+  display: grid;
+  gap: 0.75rem;
+}
+
+/*
+ * The list's search bar: one labelled field, its button, and the way out of a search. It is a plain
+ * GET form, so it works with no script and a filtered list is a URL worth sending to a colleague.
+ */
+.search-form {
+  display: grid;
+  gap: 0.5rem;
+  margin-bottom: 1.25rem;
+}
+
+.search-form .field {
+  margin-bottom: 0;
+}
+
+.search-form .primary {
+  min-height: 2.75rem;
+  padding: 0.6rem 1rem;
+  font-size: 0.95rem;
+}
+
+.search-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem 1rem;
+}
+
+.search-actions .primary {
+  width: auto;
+}
+
+@media (min-width: 34rem) {
+  .search-form {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+}
+
+.line-editor {
+  padding: 0.9rem;
+  margin-bottom: 1rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface-muted);
+}
+
+.alert {
+  margin: 0.75rem 0 0;
+  padding: 0.7rem 0.85rem;
+  border-radius: 8px;
+  background: #fdecec;
+  color: #8a1c1c;
+  font-size: 0.9rem;
+}
+
+.alert-card {
+  border-color: #e6a9a9;
+}
+
+.warn-card {
+  border-color: #e2c98a;
+}
+
+.warn-card ul {
+  color: #7a5a12;
+}
+
+.primary {
+  width: 100%;
+  min-height: 3.25rem;
+  padding: 0.9rem 1rem;
+  border: none;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: #fff;
+  font-size: 1.05rem;
+  font-weight: 600;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.primary:disabled {
+  background: var(--text-muted);
+  cursor: not-allowed;
+}
+
+.totals,
+.parties {
+  margin: 0.5rem 0 0;
+  padding: 0;
+}
+
+.totals div,
+.parties div {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.35rem 0;
+}
+
+.totals dt,
+.parties dt {
+  color: var(--text-muted);
+}
+
+.totals dd,
+.parties dd {
+  margin: 0;
+  text-align: right;
+}
+
+.totals .total-row {
+  margin-top: 0.35rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid var(--border);
+  font-weight: 600;
+}
+
+.invoice-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.invoice-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 1rem 1.1rem;
+}
+
+.invoice-card-main {
+  display: grid;
+  gap: 0.15rem;
+  min-width: 0;
+}
+
+.invoice-card-main span {
+  font-size: 0.85rem;
+}
+
+.invoice-card-amount {
+  display: grid;
+  gap: 0.15rem;
+  justify-items: end;
+  white-space: nowrap;
+}
+
+.status {
+  font-size: 0.7rem;
+  letter-spacing: 0.08em;
+  color: var(--text-muted);
+}
+
+.lines {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9rem;
+}
+
+.lines th,
+.lines td {
+  padding: 0.4rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+}
+
+.lines th {
+  font-size: 0.72rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+}
+
+.lines td:first-child,
+.lines td:nth-child(3),
+.lines td:nth-child(4),
+.lines td:nth-child(5),
+.lines td:nth-child(6) {
+  white-space: nowrap;
+}
+
+@media (min-width: 34rem) {
+  .field-row {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .line-editor .field-row {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* The signed-in strip: identity on the left, "Dil" on the right, wrapping on a narrow phone. */
+.account-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: flex-end;
+  gap: 0.35rem;
+  margin: 0 0 1rem;
+  font-size: 0.8rem;
+}
+
+.account-bar form {
+  margin: 0;
+}
+
+/* A button that reads as a link: `Dil` must not compete with the page's one primary action. */
+.link-button {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}

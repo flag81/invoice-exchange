@@ -1,0 +1,27 @@
+{
+  "name": "@einv/pdf",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Deterministic invoice PDF rendering: pure-data templates, no clock, no I/O.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./*": "./src/*.ts"
+  },
+  "sideEffects": false,
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
+    "clean": "node -e \"require('fs').rmSync('coverage',{recursive:true,force:true})\""
+  },
+  "devDependencies": {
+    "@vitest/coverage-v8": "^5.0.5",
+    "typescript": "5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5"
+  }
+}

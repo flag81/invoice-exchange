@@ -1,0 +1,58 @@
+{
+  "$schema": "https://turbo.build/schema.json",
+  "ui": "stream",
+  "envMode": "loose",
+  "globalDependencies": ["tsconfig.base.json", ".env", ".env.example"],
+  "globalEnv": ["NODE_ENV"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build", "^generate"],
+      "outputs": [".next/**", "!.next/cache/**", "dist/**"],
+      "env": [
+        "APP_URL",
+        "DATABASE_URL",
+        "AUTH_SESSION_COOKIE_NAME",
+        "OAUTH_REDIRECT_BASE_URL",
+        "STORAGE_DRIVER",
+        "STORAGE_LOCAL_ROOT",
+        "LOG_LEVEL"
+      ]
+    },
+    "dev": {
+      "dependsOn": ["generate", "^generate"],
+      "cache": false,
+      "persistent": true
+    },
+    "lint": {
+      "outputs": []
+    },
+    "typecheck": {
+      "dependsOn": ["generate", "^generate"],
+      "outputs": []
+    },
+    "test": {
+      "dependsOn": ["generate", "^generate"],
+      "outputs": [],
+      "env": ["DATABASE_URL", "TEST_DATABASE_URL", "NODE_ENV"]
+    },
+    // Prisma 7 stopped generating the client implicitly (migrate dev / db push no longer do it) and
+    // the generated client is plain TypeScript inside packages/db, so generation is an explicit,
+    // cached task that every consumer depends on.
+    "generate": {
+      "inputs": ["prisma/schema.prisma", "prisma.config.ts"],
+      "outputs": ["src/generated/**"],
+      "env": ["DATABASE_URL"]
+    },
+    "test:watch": {
+      "cache": false,
+      "persistent": true
+    },
+    "test:coverage": {
+      "outputs": ["coverage/**"],
+      "env": ["DATABASE_URL", "TEST_DATABASE_URL", "NODE_ENV"]
+    },
+    "clean": {
+      "cache": false
+    }
+  }
+}

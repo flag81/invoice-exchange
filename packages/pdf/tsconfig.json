@@ -1,0 +1,11 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    /* Rendering happens in the worker, but the templates themselves are pure functions of their
+       input: no Node APIs, no clock, no filesystem. Keeping `types` empty enforces that. */
+    "lib": ["ES2023"],
+    "types": [],
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"]
+}

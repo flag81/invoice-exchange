@@ -1,0 +1,47 @@
+{
+  "name": "invoice-exchange",
+  "version": "0.1.0",
+  "private": true,
+  "description": "B2B digital invoice exchange — pnpm monorepo (Next.js web app, Prisma/PostgreSQL, shared domain packages)",
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=22.0.0",
+    "pnpm": ">=9.0.0"
+  },
+  "scripts": {
+    "dev": "turbo run dev --filter=@einv/web",
+    "dev:https": "pnpm --filter @einv/web run dev:https",
+    "build": "turbo run build",
+    "start": "pnpm --filter @einv/web run start",
+    "lint": "eslint . --max-warnings 0",
+    "lint:fix": "eslint . --fix",
+    "typecheck": "turbo run typecheck",
+    "test": "turbo run test",
+    "test:watch": "turbo run test:watch",
+    "test:coverage": "turbo run test:coverage",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "pnpm --filter @einv/db run generate",
+    "db:migrate": "pnpm --filter @einv/db run migrate:dev",
+    "db:deploy": "pnpm --filter @einv/db run migrate:deploy",
+    "db:seed": "pnpm --filter @einv/db run seed",
+    "db:studio": "pnpm --filter @einv/db run studio",
+    "db:reset": "pnpm --filter @einv/db run reset",
+    "db:dev": "node scripts/dev-db.mjs start",
+    "db:dev:stop": "node scripts/dev-db.mjs stop",
+    "db:dev:status": "node scripts/dev-db.mjs status",
+    "clean": "turbo run clean && node -e \"require('fs').rmSync('node_modules',{recursive:true,force:true})\"",
+    "setup": "pnpm install && pnpm db:generate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.6.5",
+    "eslint": "^10.13.0",
+    "globals": "^17.13.0",
+    "prettier": "^3.9.10",
+    "tsx": "^4.23.15",
+    "turbo": "^2.11.8",
+    "typescript": "5.9.3",
+    "typescript-eslint": "^8.71.2"
+  }
+}

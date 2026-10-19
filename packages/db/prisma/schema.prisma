@@ -1,0 +1,377 @@
+// ---------------------------------------------------------------------------
+// MVP SCHEMA — the capture slice (upload a supplier invoice, extract, review, save).
+//
+// It is a deliberate subset of the full model in docs/architecture.md §4, but it keeps
+// every convention the bootstrap fixed, because a second migration must not have to
+// undo a shortcut:
+//   * snake_case tables and columns via @@map / @map (Postgres-native, no quoted identifiers)
+//   * timestamptz everywhere (@db.Timestamptz(6)); invoice dates are `date`, because an
+//     invoice date is a calendar day and must not move with a timezone
+//   * money as BigInt minor units, never floating point, never Decimal
+//   * quantities as 4 dp scaled BigInt (25000n = 2.5) — the same representation
+//     `@einv/shared` computes with, so no conversion layer can round anything
+//   * state unions (status, category, direction) as String columns: the domain owns the
+//     closed sets, and a database enum would have to be migrated whenever the domain adds
+//     a value
+//   * explicit referential actions on every relation
+//
+// Phase 3 has begun: `User`, `Membership`, `OAuthAccount`, `OAuthState` and `Session` are
+// here because Google sign-in needs them (ADR 0009). Still not here, and deliberately,
+// because nothing reads them yet: passwords and their reset tokens, invitations, bearer
+// tokens for the mobile app, invoice versions, exchange events, payments, credit notes,
+// audit events, outbox. Each arrives with the behaviour that needs it — an empty table is
+// not progress.
+// ---------------------------------------------------------------------------
+
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "esm"
+}
+
+datasource db {
+  // The connection string lives in prisma.config.ts (Prisma 7 moved it out of the schema, so a
+  // committed schema.prisma never carries a credential) — see docs/adr and the config file.
+  provider = "postgresql"
+}
+
+/// Single-row table read by the readiness probe. It proves the connection is not merely open but
+/// that the app can read the schema it expects; a migration that fails to apply is therefore
+/// reported by /api/ready instead of by a 500 on the first real request.
+model SchemaHealth {
+  id        Int      @id @default(1)
+  revision  Int      @default(1)
+  checkedAt DateTime @default(now()) @map("checked_at") @db.Timestamptz(6)
+
+  @@map("schema_health")
+}
+
+/// A tenant. The MVP has exactly one (the seed creates it) and the app resolves it by
+/// `resolveMvpCompany()`; phase 3 replaces that lookup with the signed-in user's active
+/// membership, and every query already filters by `companyId`, so nothing else changes.
+model Company {
+  id          String   @id @default(uuid()) @db.Uuid
+  name        String
+  legalName   String?  @map("legal_name")
+  vatNumber   String?  @map("vat_number")
+  countryCode String   @default("XK") @map("country_code")
+  /// The tenant's own currency: the fallback when a captured invoice does not state one.
+  currency    String   @default("EUR")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt   DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  taxRates       TaxRate[]
+  invoices       Invoice[]
+  documents      DocumentBlob[]
+  extractions    Extraction[]
+  memberships    Membership[]
+  /// Sessions whose *active* company is this one. A session outlives a deleted company
+  /// (`SetNull`) rather than being cascaded away with it.
+  activeSessions Session[]      @relation("ActiveCompanySessions")
+
+  @@map("companies")
+}
+
+/// A VAT rate, owned by the tenant and seeded with the Kosovo defaults (`TaxRate` in §4.4).
+///
+/// Rates are data, not constants: extraction matches a printed percentage against these rows, and
+/// a line snapshots the rate it used, so an invoice stays reproducible after a rate is edited.
+model TaxRate {
+  id          String   @id @default(uuid()) @db.Uuid
+  companyId   String   @map("company_id") @db.Uuid
+  /// Stable slug within the tenant: `vat-18`, `vat-8`, `vat-0`.
+  code        String
+  name        String
+  /// One of `@einv/shared`'s `TaxCategory` values.
+  category    String
+  /// A decimal *string* (`'18'`, `'8.5'`) — never a float, never a Decimal.
+  ratePercent String   @map("rate_percent")
+  countryCode String?  @map("country_code")
+  /// The rate extraction falls back to when a printed percentage matches nothing (`TAX_RATE_ASSUMED`).
+  isDefault   Boolean  @default(false) @map("is_default")
+  createdAt   DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  invoiceLines InvoiceLine[]
+
+  @@unique([companyId, code])
+  @@map("tax_rates")
+}
+
+/// An uploaded artifact: the photograph of the invoice (ADR 0004 — private storage, server-generated
+/// keys, indexed in the database). The bytes never live in this table; the row is the index that says
+/// which bytes the tenant owns.
+model DocumentBlob {
+  id               String   @id @default(uuid()) @db.Uuid
+  companyId        String   @map("company_id") @db.Uuid
+  /// `SOURCE_IMAGE` today; rendered PDFs and attachments reuse this table in phase 4.
+  kind             String
+  /// `local` | `s3` — recorded per row so a driver migration is a data question, not a guess.
+  storageDriver    String   @map("storage_driver")
+  /// `companyId/yyyy/mm/uuid.ext` — tenant-namespaced and unguessable.
+  storageKey       String   @map("storage_key")
+  /// Sniffed from the bytes, never taken from the client's Content-Type.
+  mimeType         String   @map("mime_type")
+  byteSize         Int      @map("byte_size")
+  sha256           String
+  /// What the device called the file. Presentation only; never used to build a key.
+  originalFilename String?  @map("original_filename")
+  createdAt        DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  company     Company      @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  extractions Extraction[]
+
+  @@unique([storageDriver, storageKey])
+  @@index([companyId, createdAt])
+  @@map("document_blobs")
+}
+
+/// One attempt at reading an image, kept even when it fails: a capture that produced nonsense is
+/// evidence, and the raw answer is what makes a bad extraction debuggable months later.
+model Extraction {
+  id             String    @id @default(uuid()) @db.Uuid
+  companyId      String    @map("company_id") @db.Uuid
+  documentBlobId String?   @map("document_blob_id") @db.Uuid
+  /// `SUCCEEDED` | `FAILED`.
+  status         String
+  /// `gemini` | `stub` (see the provider interface in apps/web).
+  provider       String
+  model          String?
+  /// The provider's answer, verbatim, as JSON text.
+  rawJson        String?   @map("raw_json")
+  /// The normalised draft (`@einv/shared`'s `NormalisedDraft`), as JSON text — including the problems
+  /// that were shown to the human who reviewed it.
+  draftJson      String?   @map("draft_json")
+  errorMessage   String?   @map("error_message")
+  durationMs     Int?      @map("duration_ms")
+  /// Set when the draft was saved as an invoice — the review screen's "Save" button.
+  invoiceId      String?   @unique @map("invoice_id") @db.Uuid
+  createdAt      DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  completedAt    DateTime? @map("completed_at") @db.Timestamptz(6)
+
+  company      Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  documentBlob DocumentBlob? @relation(fields: [documentBlobId], references: [id], onDelete: SetNull)
+  invoice      Invoice?      @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+
+  @@index([companyId, createdAt])
+  @@map("extractions")
+}
+
+/// A captured supplier invoice (a payable) as it was reviewed and saved.
+///
+/// The totals are stored, not recomputed on read: they are what the human confirmed on the review
+/// screen, and `@einv/shared`'s invariants are checked before the row is written, so a stored total
+/// that disagrees with its lines is a bug that cannot enter the database quietly.
+///
+/// Known MVP limitation, recorded here rather than discovered later: nothing prevents the same
+/// supplier invoice being captured twice (a real `@@unique` needs a normalised counterparty id,
+/// which arrives with the counterparty table in phase 4).
+model Invoice {
+  id            String    @id @default(uuid()) @db.Uuid
+  /// The tenant: on a photographed supplier invoice this company is the **buyer**.
+  companyId     String    @map("company_id") @db.Uuid
+  /// `PAYABLE` (a supplier invoice we received) | `RECEIVABLE` (an invoice we issued).
+  direction     String    @default("PAYABLE")
+  /// `@einv/shared`'s `InvoiceStatus`; `DRAFT` until issuing exists (phase 4).
+  status        String    @default("DRAFT")
+  currency      String    @default("EUR")
+  /// The supplier's own number, exactly as printed — how a human spots a duplicate, and half of the
+  /// identity `findDuplicateInvoice` compares (supplier + number, ADR 0008).
+  invoiceNumber String?   @map("invoice_number")
+  /// Calendar days, not instants: a `date` column cannot move with a timezone.
+  issueDate     DateTime? @map("issue_date") @db.Date
+  dueDate       DateTime? @map("due_date") @db.Date
+
+  supplierName        String  @map("supplier_name")
+  supplierVatNumber   String? @map("supplier_vat_number")
+  supplierAddress     String? @map("supplier_address")
+  supplierCountryCode String? @map("supplier_country_code")
+  buyerName           String? @map("buyer_name")
+  buyerVatNumber      String? @map("buyer_vat_number")
+  notes               String?
+
+  /// Money, all of it in minor units of `currency` — the four formulas of §4.4, stored.
+  subtotalMinor         BigInt @map("subtotal_minor")
+  lineDiscountMinor     BigInt @default(0) @map("line_discount_minor")
+  documentDiscountMinor BigInt @default(0) @map("document_discount_minor")
+  taxMinor              BigInt @map("tax_minor")
+  totalMinor            BigInt @map("total_minor")
+  paidMinor             BigInt @default(0) @map("paid_minor")
+  payableMinor          BigInt @map("payable_minor")
+  /// `TaxSummaryRow[]` as JSON text: the per-rate rows a tax authority (and the PDF) expects.
+  taxSummaryJson        String @map("tax_summary_json")
+
+  /// `CAMERA` | `UPLOAD` | `MANUAL` — where the numbers came from, for support.
+  captureSource String    @default("UPLOAD") @map("capture_source")
+  /// Set when the invoice leaves `DRAFT` (invariant 3 in §4.3). Always null in the MVP.
+  lockedAt      DateTime? @map("locked_at") @db.Timestamptz(6)
+  createdAt     DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt     DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  company    Company       @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  lines      InvoiceLine[]
+  extraction Extraction?
+
+  @@index([companyId, status])
+  @@index([companyId, issueDate])
+  @@index([companyId, invoiceNumber])
+  @@map("invoices")
+}
+
+/// One line of a captured invoice. The amounts and the tax are stored as the review screen confirmed
+/// them, and the rate used is snapshotted, so editing or deleting a `TaxRate` row cannot silently
+/// change what an old invoice says it charged.
+model InvoiceLine {
+  id                String @id @default(uuid()) @db.Uuid
+  invoiceId         String @map("invoice_id") @db.Uuid
+  /// 1-based, as printed. Unique within the invoice.
+  position          Int
+  description       String
+  /// 4 dp scaled integer: `25000n` is `2.5`. The same representation `@einv/shared` computes with.
+  quantityScaled    BigInt @map("quantity_scaled")
+  unitPriceMinor    BigInt @map("unit_price_minor")
+  lineDiscountMinor BigInt @default(0) @map("line_discount_minor")
+  /// `round(unitPriceMinor × quantity) − lineDiscountMinor`, stored so a line's own total is auditable.
+  lineTotalMinor    BigInt @map("line_total_minor")
+  taxMinor          BigInt @map("tax_minor")
+
+  taxRateId              String @map("tax_rate_id") @db.Uuid
+  /// The rate *as used*: a decimal string (`'18'`, `'8.5'`).
+  taxRatePercentSnapshot String @map("tax_rate_percent_snapshot")
+  /// The category as used (`STANDARD`, `REDUCED`, `ZERO`, `EXEMPT`, `REVERSE_CHARGE`).
+  taxCategorySnapshot    String @map("tax_category_snapshot")
+
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+  /// `Restrict`: a rate an invoice used may be deactivated, never deleted out from under it.
+  taxRate TaxRate @relation(fields: [taxRateId], references: [id], onDelete: Restrict)
+
+  @@unique([invoiceId, position])
+  @@map("invoice_lines")
+}
+
+// ---------------------------------------------------------------------------
+// Identity (phase 3 — Google sign-in, ADR 0009)
+//
+// A user is *global*: `users` deliberately has no `company_id`. Belonging to a tenant is a
+// `membership` row, which is what lets one accountant serve several companies and what keeps
+// "who may see this invoice" a question about memberships rather than about who signed up first.
+// ---------------------------------------------------------------------------
+
+/// A person. Email is the identity: stored trimmed and lower-cased (the app normalises before it gets
+/// here), unique, and marked verified only when the provider said so.
+///
+/// `passwordHash` from §4.1 is absent on purpose: this slice signs in with Google only, and an
+/// always-null column would suggest a password feature that does not exist.
+model User {
+  id              String    @id @default(uuid()) @db.Uuid
+  email           String    @unique
+  name            String?
+  imageUrl        String?   @map("image_url")
+  /// Set only from a provider claim that said `email_verified === true`.
+  emailVerifiedAt DateTime? @map("email_verified_at") @db.Timestamptz(6)
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt       DateTime  @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  memberships   Membership[]
+  oauthAccounts OAuthAccount[]
+  sessions      Session[]
+
+  @@map("users")
+}
+
+/// `(user, company, role)` — the row that makes a user an actor inside a tenant (§4.1).
+///
+/// `role` is a string from `@einv/shared`'s closed union (`OWNER`, `ACCOUNTANT`, …), not a database
+/// enum: the domain owns the set, and adding a role must not need a migration.
+model Membership {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  companyId String   @map("company_id") @db.Uuid
+  role      String   @default("OWNER")
+  createdAt DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, companyId])
+  @@index([companyId])
+  @@map("memberships")
+}
+
+/// The link between a provider account and a user (§4.1). One user may hold several providers; one
+/// provider account belongs to exactly one user — the unique key below is what makes a second
+/// Google account with the same email a *link* decision rather than a silent duplicate identity.
+///
+/// No refresh token is stored: Google sign-in needs the ID token at callback time only, and keeping a
+/// credential this build never uses would be a liability with no reader.
+model OAuthAccount {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  /// `google` today; `facebook` joins it when that leg exists.
+  provider          String
+  /// The provider's stable subject (`sub`), never the email — an email can be reassigned.
+  providerAccountId String   @map("provider_account_id")
+  /// The email the provider gave us at link time, for support: "which Google account is this?".
+  email             String?
+  createdAt         DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+  updatedAt         DateTime @updatedAt @map("updated_at") @db.Timestamptz(6)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+  @@map("oauth_accounts")
+}
+
+/// One in-flight sign-in attempt: PKCE `code_verifier`, `nonce`, the `state` and where to return to.
+///
+/// Single use is the point: the callback consumes the row (sets `consumed_at`) in the same statement
+/// that reads it, so a replayed callback finds nothing even if both cookies are replayed too. The
+/// 10-minute TTL bounds an abandoned attempt, and `expires_at` is checked in SQL rather than in the
+/// application so a clock skew in one process cannot extend it.
+model OAuthState {
+  id           String    @id @default(uuid()) @db.Uuid
+  provider     String
+  state        String    @unique
+  codeVerifier String    @map("code_verifier")
+  nonce        String?
+  /// A path on this site only (`/invoices`), never an absolute URL: an open redirect is one careless
+  /// `startsWith('/')` away otherwise.
+  returnTo     String?   @map("return_to")
+  createdAt    DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  expiresAt    DateTime  @map("expires_at") @db.Timestamptz(6)
+  consumedAt   DateTime? @map("consumed_at") @db.Timestamptz(6)
+
+  @@index([expiresAt])
+  @@map("oauth_states")
+}
+
+/// A server-side session (§5.3). Only the SHA-256 of a 256-bit random token is stored, so a database
+/// dump does not yield a usable cookie; `revoked_at` is how sign-out is a fact rather than a hope that
+/// the browser forgot the cookie.
+model Session {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  /// Hex SHA-256 of the cookie value.
+  tokenHash       String    @unique @map("token_hash")
+  /// The company every request is scoped to. Null only if the company was deleted underneath us.
+  activeCompanyId String?   @map("active_company_id") @db.Uuid
+  /// Recorded for the audit trail §5.3 promises; neither is trusted for anything else.
+  ipAddress       String?   @map("ip_address")
+  userAgent       String?   @map("user_agent")
+  createdAt       DateTime  @default(now()) @map("created_at") @db.Timestamptz(6)
+  lastSeenAt      DateTime  @default(now()) @map("last_seen_at") @db.Timestamptz(6)
+  /// Absolute lifetime (30 days). There is no per-request sliding expiry: a token that can live
+  /// forever while in use is the failure mode rotation exists to avoid.
+  expiresAt       DateTime  @map("expires_at") @db.Timestamptz(6)
+  revokedAt       DateTime? @map("revoked_at") @db.Timestamptz(6)
+
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  activeCompany Company? @relation("ActiveCompanySessions", fields: [activeCompanyId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}

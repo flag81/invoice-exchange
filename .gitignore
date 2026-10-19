@@ -1,0 +1,56 @@
+# ---- Dependencies -----------------------------------------------------------
+node_modules/
+.pnpm-store/
+
+# ---- Build output -----------------------------------------------------------
+.next/
+out/
+dist/
+build/
+*.tsbuildinfo
+.turbo/
+
+# ---- Tests / coverage -------------------------------------------------------
+coverage/
+.vitest/
+test-results/
+playwright-report/
+
+# ---- Environment / secrets (never commit) -----------------------------------
+.env
+.env.*
+!.env.example
+
+# ---- Local dev data (dev Postgres data dir, local storage driver) ------------
+.devdata/
+storage-local/
+*.pgdata/
+
+# ---- Logs -------------------------------------------------------------------
+*.log
+logs/
+.tmp/
+npm-debug.log*
+pnpm-debug.log*
+
+# ---- Local TLS (`pnpm dev:https` writes a private key here) ------------------
+certificates/
+*.pem
+
+# ---- Generated artifacts ----------------------------------------------------
+# The knowledge graph is rebuilt by the graphify tool; 5 MB of JSON is not source.
+graphify-out/
+# Prisma 7 generates the client as plain TypeScript into the package (no node_modules magic);
+# it is rebuilt by `pnpm db:generate` (and automatically by typecheck/build/test/dev).
+packages/db/src/generated/
+# Rendered invoice PDFs / export artifacts written by the local storage adapter
+tmp/
+temp/
+
+# ---- Editor / OS ------------------------------------------------------------
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+.DS_Store
+Thumbs.db

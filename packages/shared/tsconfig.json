@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    /* The domain core is deliberately isolated from Node and the DOM:
+       no `process`, no `Buffer`, no `document`. If this package ever needs one of them,
+       it is a signal that logic belongs in apps/web instead. */
+    "lib": ["ES2023"],
+    "types": [],
+    "rootDir": "src"
+  },
+  "include": ["src/**/*.ts"]
+}
